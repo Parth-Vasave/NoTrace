@@ -13,7 +13,7 @@ export default function PrivacyPolicy() {
           <div className="mb-16">
             <h1 className="text-4xl sm:text-6xl md:text-7xl lg:text-8xl font-black leading-tight tracking-tighter text-white uppercase mb-8 break-words md:break-normal">Privacy Policy</h1>
             <p className="text-xl text-white/50 leading-relaxed max-w-xl font-light">
-              Last updated: <span className="font-mono">October 2023</span>
+              Last updated: <span className="font-mono">March 2026</span>
             </p>
           </div>
           
