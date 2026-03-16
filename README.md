@@ -2,7 +2,7 @@
 
 **NoTrace** is a high-security, minimalist anonymous chat platform built with Next.js and Firebase. Designed with a focus on absolute privacy, it ensures that your conversations leave no footprint.
 
-![NoTrace Banner](/public/notracebanner.png)
+![NoTrace Banner](public/notracebanner.png)
 
 ## Core Principles
 
