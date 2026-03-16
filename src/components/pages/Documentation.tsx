@@ -55,7 +55,7 @@ export default function Documentation() {
               </div>
             </div>
             <p className="text-sm text-white/40 font-light italic border-l-2 border-white/10 pl-6">
-              "GCM (Galois/Counter Mode) provides both data authenticity and confidentiality, ensuring that messages cannot be tampered with while in transit."
+              &quot;GCM (Galois/Counter Mode) provides both data authenticity and confidentiality, ensuring that messages cannot be tampered with while in transit.&quot;
             </p>
           </section>
 
@@ -68,7 +68,7 @@ export default function Documentation() {
                   When you generate a room, a unique 8-character token is minted. This token serves as the temporary address for your secure link.
                 </p>
                 <div className="bg-black border border-white/5 p-4 rounded font-mono text-xs text-white/40">
-                  // secure_init_logic.js<br/>
+                  {/* secure_init_logic.js */}<br/>
                   const room_key = crypto.generateRoomKey();<br/>
                   await sync.initialize(room_key);
                 </div>
@@ -80,9 +80,9 @@ export default function Documentation() {
                 </p>
               </div>
               <div>
-                <span className="block text-white font-bold uppercase tracking-widest text-xs mb-4">3. Termination ("Kill-Switch")</span>
+                <span className="block text-white font-bold uppercase tracking-widest text-xs mb-4">3. Termination (&quot;Kill-Switch&quot;)</span>
                 <p className="text-base text-white/60 font-light">
-                  Rooms are destroyed instantly when the "Kill-Switch" is activated or when all participants disconnect. Termination involves the immediate deletion of the room record from our volatile global state.
+                  Rooms are destroyed instantly when the &quot;Kill-Switch&quot; is activated or when all participants disconnect. Termination involves the immediate deletion of the room record from our volatile global state.
                 </p>
               </div>
             </div>
@@ -135,7 +135,7 @@ export default function Documentation() {
               <div>
                 <span className="block text-white font-bold uppercase tracking-widest text-xs mb-4">1. Auto Message Expiry</span>
                 <p className="text-base text-white/60 font-light mb-4">
-                  To maintain the ephemeral nature of the platform, rooms are limited to the latest 100 messages. Older data is pruned instantly upon new intake.
+                  To ensure total privacy, everything is stored strictly in memory. We don&apos;t use persistent tracking like cookies or local storage for your chat history. Once everyone leaves a room, the data is gone for good—it&apos;s like the conversation never happened.
                 </p>
                 <div className="bg-white/[0.03] border border-white/5 p-4 rounded text-[10px] font-mono text-emerald-500/80">
                   {"// Cloud Function Snippet for 24h Expiry\nexports.cleanupRooms = functions.pubsub.schedule('every 24 hours').onRun(async (context) => {\n  const now = Date.now();\n  const cutoff = now - (24 * 60 * 60 * 1000);\n  // Logic to delete rooms older than cutoff\n});"}

@@ -62,7 +62,7 @@ export default function LandingPage() {
               <div className="flex flex-col gap-4 md:gap-6 p-0 bg-transparent transition-opacity hover:opacity-100 opacity-60">
                 <h3 className="text-base md:text-lg font-bold uppercase tracking-wider text-white">Zero Data Retention</h3>
                 <p className="text-white/50 leading-relaxed font-light text-sm md:text-base">
-                  We don't store IPs, metadata, or chat histories. Once it's gone, it's gone forever.
+                  We don&apos;t store IPs, metadata, or chat histories. Once it&apos;s gone, it&apos;s gone forever.
                 </p>
               </div>
               <div className="flex flex-col gap-4 md:gap-6 p-0 bg-transparent transition-opacity hover:opacity-100 opacity-60">

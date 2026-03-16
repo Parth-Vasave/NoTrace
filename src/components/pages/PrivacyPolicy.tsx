@@ -25,10 +25,10 @@ export default function PrivacyPolicy() {
             </section>
             
             <section>
-              <h3 className="text-white/40 font-bold tracking-[0.3em] text-[10px] uppercase mb-8">1. The "No-Data" Guarantee</h3>
+              <h3 className="text-white/40 font-bold tracking-[0.3em] text-[10px] uppercase mb-8">1. The &quot;No-Data&quot; Guarantee</h3>
               <div className="flex flex-col gap-10">
                 <p className="text-white/60 text-lg font-light leading-relaxed max-w-3xl">
-                  We have engineered NoTrace to be blind to your identity. Our systems are designed to process temporary communication without ever knowing who you are or what you are saying.
+                  We log interaction metadata (like &quot;message sent&quot; or &quot;room created&quot;) using non-identifiable session IDs to prevent platform abuse. Our systems are designed to process temporary communication without ever knowing who you are or what you are saying.
                 </p>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
                   <div>
@@ -51,13 +51,13 @@ export default function PrivacyPolicy() {
               <h3 className="text-white/40 font-bold tracking-[0.3em] text-[10px] uppercase mb-8">2. Ephemeral Architecture</h3>
               <div className="flex flex-col gap-10">
                 <p className="text-white/60 text-lg font-light leading-relaxed max-w-3xl">
-                  Communication on NoTrace is transient. Messages exist in volatile memory and are purged aggressively to ensure no permanent record is created.
+                  Communication is handled via temporary chat &quot;rooms&quot; which are stored in a volatile state and wiped completely after 24 hours. Messages exist in volatile memory and are purged aggressively to ensure no permanent record is created.
                 </p>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
                   <div>
                     <span className="block text-white font-bold uppercase tracking-widest text-xs mb-3">Volatile Persistence</span>
                     <p className="text-sm text-white/40 leading-relaxed font-light">
-                      Data is stored in a real-time state synchronizer. Once a room expires or is manually "killed," all associated cryptographic keys and message histories are wiped.
+                      Data is stored in a real-time state synchronizer. Once a room expires or is manually &quot;killed,&quot; all associated cryptographic keys and message histories are wiped.
                     </p>
                   </div>
                   <div>
@@ -78,7 +78,7 @@ export default function PrivacyPolicy() {
                 </p>
                 <div className="border-l border-white/10 pl-8 space-y-6 max-w-2xl">
                   <p className="text-sm text-white/40 font-light italic">
-                    "We use end-to-end encryption (AES-256-GCM) where possible to ensure that even if our infrastructure were compromised, your private conversations remain unintelligible."
+                    All messages are encrypted locally using AES-256-GCM. Because the key is derived from the room code, even the database administrator cannot read your messages—only those in the room with the &quot;code&quot; can decrypt them.
                   </p>
                 </div>
               </div>
