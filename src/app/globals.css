@@ -1,0 +1,83 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 280 11% 97%; /* #f7f5f8 */
+    --foreground: 265 36% 10%; /* Dark Charcoal/Violet */
+    --card: 0 0% 100%;
+    --card-foreground: 265 36% 10%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 265 36% 10%;
+    --primary: 263 91% 60%; /* #833cf6 Purple */
+    --primary-foreground: 0 0% 100%;
+    --secondary: 260 100% 97%; /* #f5f0ff Soft Purple */
+    --secondary-foreground: 263 91% 60%;
+    --muted: 0 0% 90%;
+    --muted-foreground: 0 0% 40%; /* #666666 Medium Grey */
+    --accent: 263 91% 60%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 263 91% 95%;
+    --input: 0 0% 100%;
+    --ring: 263 91% 60%;
+    --radius: 0.75rem;
+  }
+  .dark {
+    --background: 240 10% 4%; /* Near black */
+    --foreground: 0 0% 98%;
+    --card: 240 10% 6%;
+    --card-foreground: 0 0% 98%;
+    --popover: 240 10% 6%;
+    --popover-foreground: 0 0% 98%;
+    --primary: 263 91% 65%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 240 10% 12%;
+    --secondary-foreground: 0 0% 98%;
+    --muted: 240 10% 12%;
+    --muted-foreground: 240 5% 65%;
+    --accent: 240 10% 12%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 240 10% 15%;
+    --input: 240 10% 12%;
+    --ring: 263 91% 65%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: 'Space Grotesk', sans-serif;
+  }
+}
+
+/* Custom Scrollbar for Chat Area */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: hsl(var(--primary) / 0.1);
+  border-radius: 10px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--primary) / 0.2);
+}
+
+.transition-all-300 {
+  transition: all 300ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Hide Next.js Development Badge */
+nextjs-portal, #__next-build-watcher, .nextjs-static-indicator-container {
+  display: none !important;
+}

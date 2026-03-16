@@ -1,0 +1,27 @@
+{
+  "rules": {
+    "rooms": {
+      "$room_id": {
+        ".read": "true",
+        ".write": "!data.exists() || data.child('members/' + auth.token.user_id).exists()",
+        "messages": {
+          "$msg_id": {
+            ".validate": "newData.hasChildren(['senderId', 'text', 'timestamp']) && newData.child('text').val().length <= 1000",
+            ".write": "!data.exists() || data.child('senderId').val() == auth.token.user_id"
+          }
+        },
+        "members": {
+          "$user_id": {
+            ".write": "!data.exists() || $user_id == auth.token.user_id",
+            "online": { ".validate": "newData.isBoolean()" },
+            "lastSeen": { ".validate": "newData.val() <= now" }
+          }
+        }
+      }
+    },
+    "abuse_logs": {
+      ".read": "false",
+      ".write": "true"
+    }
+  }
+}
