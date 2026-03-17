@@ -31,8 +31,6 @@ export default function ChatInterface({ roomCode }: ChatInterfaceProps) {
   const [isJoining, setIsJoining] = useState(true);
   const [captchaToken, setCaptchaToken] = useState<string | null>(null);
   const [isVerified, setIsVerified] = useState(false);
-  const captchaContainerRef = useRef<HTMLDivElement>(null);
-  const turnstileWidgetId = useRef<string | null>(null);
   
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -114,6 +112,12 @@ export default function ChatInterface({ roomCode }: ChatInterfaceProps) {
                 setCaptchaToken(token);
                 if (token) {
                   setTimeout(() => setIsVerified(true), 800); // Smooth transition
+                } else {
+                  toast({
+                    variant: "destructive",
+                    title: "Verification failed",
+                    description: "Captcha verification timed out or failed. Please retry.",
+                  });
                 }
               }} 
             />
