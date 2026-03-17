@@ -90,6 +90,7 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
   const listenersRef = React.useRef<{ messages?: DatabaseReference; members?: DatabaseReference }>({});
   const joinAttemptRef = React.useRef<number>(0); 
   const lastMessageTimeRef = React.useRef<number>(0);
+  const messagesCountRef = React.useRef<number>(0);
 
   // Sync refs with state for stable callback access
   React.useEffect(() => {
@@ -141,6 +142,7 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
        console.log("Members listener detached.");
     }
      // Reset local state associated with listeners
+    messagesCountRef.current = 0;
     setMessages([]);
     setMembers([]);
     setError(null); // Clear errors related to the old room
@@ -399,7 +401,9 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
      try {
        const roomRef = getRoomRef(roomCode);
        const membersRef = getMembersRef(roomCode);
-       const memberId = `user_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+       const randomBytes = crypto.getRandomValues(new Uint8Array(8));
+       const randomHex = Array.from(randomBytes).map(b => b.toString(16).padStart(2, '0')).join('');
+       const memberId = `user_${Date.now()}_${randomHex}`;
        const finalUserName = userName || generateRandomName();
        const userRef = getUserRef(roomCode, memberId);
 
@@ -490,6 +494,7 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
                 return { id, ...msg, text: decryptedText };
             })) : [];
             loadedMessages.sort((a, b) => (a.timestamp as number) - (b.timestamp as number));
+            messagesCountRef.current = loadedMessages.length;
             setMessages(loadedMessages);
         }, (err) => {
             if (currentRoomCode.current !== roomCode || joinAttemptRef.current !== attemptId) return;
@@ -558,7 +563,6 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
         getMembersRef,
         getUserRef,
         getMessagesRef,
-        toast,
         setError,
         leaveRoom
     ]);
@@ -608,7 +612,7 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
       
       // Post-send security & maintenance
       await logInteraction('message_sent', { length: trimmedText.length });
-      if (messages.length >= MAX_ROOM_MESSAGES) {
+      if (messagesCountRef.current >= MAX_ROOM_MESSAGES) {
         await trimMessages(roomCode);
       }
 
@@ -622,7 +626,7 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
       setError(`Failed to send message: ${err.message}`);
       throw err;
     }
-  }, [db, getMessagesRef, getUserRef, setError]);
+  }, [db, getMessagesRef, getUserRef, setError, logInteraction, trimMessages, toast]);
 
 
   // --- Effects ---
