@@ -21,7 +21,10 @@
     },
     "abuse_logs": {
       ".read": "false",
-      ".write": "true"
+      ".write": "false",
+      "$log_id": {
+        ".validate": "newData.hasChildren(['type', 'timestamp', 'sessionId']) && newData.child('type').isString() && newData.child('type').val().length <= 64 && newData.child('sessionId').isString() && newData.child('sessionId').val().length <= 128"
+      }
     }
   }
 }

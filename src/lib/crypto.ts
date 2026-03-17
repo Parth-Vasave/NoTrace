@@ -5,21 +5,39 @@
 
 const ALGORITHM = 'AES-GCM';
 const IV_LENGTH = 12; // Standard for GCM
+const PBKDF2_ITERATIONS = 100_000;
+const PBKDF2_HASH = 'SHA-256';
+// A fixed app-level pepper mixed into the salt so that keys derived from room
+// codes cannot be attacked with pre-computed tables built outside this app.
+const APP_PEPPER = 'NoTrace-v1-E2EE';
 
 /**
- * Derives a cryptographic key from a room code.
- * In a real-world scenario, we'd use a salted PBKDF2, 
- * but for this ephemeral app, we'll use a SHA-256 hash of the room code as the raw key material.
+ * Derives a cryptographic key from a room code using PBKDF2.
+ * Uses a deterministic salt (pepper + room code) so all room participants
+ * independently derive the same key without needing to exchange a salt.
  */
 async function deriveKey(roomCode: string): Promise<CryptoKey> {
   const enc = new TextEncoder();
-  const data = enc.encode(roomCode.toUpperCase());
-  const hash = await crypto.subtle.digest('SHA-256', data);
-  
-  return await crypto.subtle.importKey(
+  const keyMaterial = await crypto.subtle.importKey(
     'raw',
-    hash,
-    { name: ALGORITHM },
+    enc.encode(roomCode.toUpperCase()),
+    'PBKDF2',
+    false,
+    ['deriveKey']
+  );
+
+  // Salt = pepper + room code — deterministic but app-specific
+  const salt = enc.encode(`${APP_PEPPER}:${roomCode.toUpperCase()}`);
+
+  return crypto.subtle.deriveKey(
+    {
+      name: 'PBKDF2',
+      salt,
+      iterations: PBKDF2_ITERATIONS,
+      hash: PBKDF2_HASH,
+    },
+    keyMaterial,
+    { name: ALGORITHM, length: 256 },
     false,
     ['encrypt', 'decrypt']
   );

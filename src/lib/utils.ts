@@ -5,14 +5,28 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
 
-// Function to generate a random 6-character alphanumeric room code
+// Function to generate a cryptographically secure random room code
 export function generateRoomCode(length: number = 6): string {
   const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-  let result = '';
-  for (let i = 0; i < length; i++) {
-    result += characters.charAt(Math.floor(Math.random() * characters.length));
+  const charCount = characters.length;
+  // Reject bytes that would cause modulo bias (256 % 36 = 4, so reject values >= 252)
+  const maxUnbiasedValue = Math.floor(256 / charCount) * charCount;
+  const result: string[] = [];
+  // Allocate a fixed-size buffer once; re-fill only if more bytes are needed
+  const bufferSize = 64;
+  let randomBytes = crypto.getRandomValues(new Uint8Array(bufferSize));
+  let bufferPos = 0;
+  while (result.length < length) {
+    if (bufferPos >= bufferSize) {
+      randomBytes = crypto.getRandomValues(new Uint8Array(bufferSize));
+      bufferPos = 0;
+    }
+    const byte = randomBytes[bufferPos++];
+    if (byte < maxUnbiasedValue) {
+      result.push(characters[byte % charCount]);
+    }
   }
-  return result;
+  return result.join('');
 }
 
 // Function to generate a random anonymous user name
