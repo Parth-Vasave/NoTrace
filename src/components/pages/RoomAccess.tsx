@@ -17,11 +17,36 @@ export default function RoomAccess() {
   const [isCreating, setIsCreating] = useState(false);
   const [isJoining, setIsJoining] = useState(false);
   const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const [showVerification, setShowVerification] = useState(false);
+  const [pendingAction, setPendingAction] = useState<'create' | 'join' | null>(null);
+
   const router = useRouter();
   const { checkRoomExists, createRoom } = useChat();
   const { toast } = useToast();
 
+  // Effect to handle pending action after CAPTCHA verification
+  React.useEffect(() => {
+    if (captchaToken && pendingAction) {
+      // Small delay for smooth transition after CAPTCHA checkbox disappears
+      setTimeout(() => {
+        if (pendingAction === 'create') {
+          handleCreateRoom();
+        } else if (pendingAction === 'join') {
+          handleJoinRoom();
+        }
+        setPendingAction(null);
+        setShowVerification(false);
+      }, 500);
+    }
+  }, [captchaToken, pendingAction]);
+
   const handleCreateRoom = async () => {
+    if (!captchaToken) {
+      setPendingAction('create');
+      setShowVerification(true);
+      return;
+    }
+
     setIsCreating(true);
     try {
       const newRoomCode = generateRoomCode();
@@ -35,6 +60,8 @@ export default function RoomAccess() {
         title: "Error creating room",
         description: error.message || "Could not create a new room. Please try again.",
       });
+      // Reset CAPTCHA on error so they have to solve it again for security
+      setCaptchaToken(null);
     } finally {
       setIsCreating(false);
     }
@@ -49,6 +76,13 @@ export default function RoomAccess() {
       });
       return;
     }
+
+    if (!captchaToken) {
+      setPendingAction('join');
+      setShowVerification(true);
+      return;
+    }
+
     setIsJoining(true);
     try {
       const exists = await checkRoomExists(roomCode);
@@ -62,6 +96,7 @@ export default function RoomAccess() {
           description: "The entered room code does not exist.",
         });
         setIsJoining(false);
+        setCaptchaToken(null); // Reset on failure
       }
     } catch (error: any) {
       console.error('Error joining room:', error);
@@ -71,6 +106,7 @@ export default function RoomAccess() {
         description: error.message || "Could not join the room. Please check the code and try again.",
       });
       setIsJoining(false);
+      setCaptchaToken(null);
     }
   };
 
@@ -78,10 +114,38 @@ export default function RoomAccess() {
     <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden bg-black text-white selection:bg-white/20">
       <Navbar />
       
-      <main className="flex-1 flex flex-col px-6 md:px-16 py-16 md:py-32 max-w-4xl w-full mx-auto">
+      <main className="flex-1 flex flex-col px-6 md:px-16 py-16 md:py-32 max-w-4xl w-full mx-auto relative">
+        {/* Verification Overlay */}
+        {showVerification && (
+          <div className="absolute inset-0 z-50 flex items-center justify-center p-6 bg-black/90 backdrop-blur-xl transition-all duration-300">
+            <div className="max-w-md w-full bg-white/[0.02] border border-white/10 p-10 rounded-3xl text-center space-y-10 shadow-2xl">
+              <div className="space-y-4">
+                <h2 className="text-3xl md:text-4xl font-black tracking-tighter uppercase italic italic">Identity Verify</h2>
+                <p className="text-white/40 font-bold tracking-[0.2em] text-[10px] uppercase">
+                  Protecting transient integrity
+                </p>
+              </div>
+              
+              <div className="space-y-8">
+                <p className="text-sm text-white/50 font-light leading-relaxed">
+                  Solve the challenge below to prove your identity and proceed with the secure session.
+                </p>
+                <CaptchaGate onVerify={setCaptchaToken} className="w-full" />
+              </div>
+
+              <button 
+                onClick={() => { setShowVerification(false); setPendingAction(null); }}
+                className="text-[10px] uppercase tracking-widest text-white/30 hover:text-white transition-colors pt-4 flex items-center justify-center gap-2 mx-auto"
+              >
+                <span className="text-sm">←</span> Cancel Request
+              </button>
+            </div>
+          </div>
+        )}
+
         <div className="mb-12 md:mb-16">
-          <h1 className="text-4xl sm:text-6xl md:text-8xl font-black leading-tight tracking-tighter text-white uppercase mb-4 md:mb-8 break-words">Room Access</h1>
-          <p className="text-lg md:text-xl text-white/50 leading-relaxed max-w-xl font-light">
+          <h1 className="text-4xl sm:text-6xl md:text-8xl font-black leading-tight tracking-tighter text-white uppercase mb-4 md:mb-8 break-words text-left">Room Access</h1>
+          <p className="text-lg md:text-xl text-white/50 leading-relaxed max-w-xl font-light text-left">
             Secure, anonymous communication. Join an existing channel or create a new transient space.
           </p>
         </div>
@@ -100,25 +164,7 @@ export default function RoomAccess() {
                 onChange={(e) => setDisplayName(e.target.value)}
                 className="text-xl md:text-2xl"
               />
-              <p className="text-[10px] md:text-xs text-slate-400/60">Visible to others in the room.</p>
-            </div>
-          </section>
-
-          {/* Verification Section */}
-          <section className="bg-white/[0.02] border border-white/5 p-6 md:p-8 rounded-2xl md:rounded-3xl backdrop-blur-sm">
-            <h3 className="text-white/40 font-bold tracking-[0.3em] text-[10px] uppercase mb-6">Security Verification</h3>
-            <div className="flex flex-col md:flex-row items-center gap-6">
-              <CaptchaGate onVerify={setCaptchaToken} className="w-full md:w-auto" />
-              <div className="flex-1">
-                <p className="text-sm text-white/50 font-light leading-relaxed">
-                  Verification is required to prevent automated access and maintain session integrity.
-                </p>
-                {captchaToken && (
-                  <div className="mt-2 flex items-center gap-2 text-emerald-500/80 text-[10px] uppercase tracking-widest font-bold">
-                    <span className="material-symbols-outlined text-sm">verified</span> Verified Access Granted
-                  </div>
-                )}
-              </div>
+              <p className="text-[10px] md:text-xs text-slate-400/60 font-mono italic">TRACE IDENTIFIER: {displayName ? displayName.toUpperCase() : 'UNKNOWN'}</p>
             </div>
           </section>
 
@@ -143,7 +189,7 @@ export default function RoomAccess() {
                   <NewButton 
                     variant="primary" 
                     onClick={handleJoinRoom}
-                    disabled={isJoining || isCreating || !roomCode.trim() || !captchaToken}
+                    disabled={isJoining || isCreating || !roomCode.trim()}
                     className="w-full md:w-auto"
                   >
                     {isJoining ? 'Connecting...' : 'Connect to Room'}
@@ -162,7 +208,7 @@ export default function RoomAccess() {
                   variant="outline" 
                   className="w-full md:w-fit"
                   onClick={handleCreateRoom}
-                  disabled={isCreating || isJoining || !captchaToken}
+                  disabled={isCreating || isJoining}
                 >
                   {isCreating ? 'Generating...' : 'Generate Room'}
                 </NewButton>
@@ -170,20 +216,6 @@ export default function RoomAccess() {
             </section>
           </div>
 
-          {/* Recent Activity (Placeholder for now) */}
-          <section className="pt-12">
-            <h3 className="text-white/40 font-bold tracking-[0.3em] text-[10px] uppercase mb-8 flex items-center gap-2">
-              <span className="material-symbols-outlined text-sm">history</span> Recent Activity
-            </h3>
-            <div className="divide-y divide-white/5">
-              <div className="flex items-center justify-between py-6 grayscale opacity-40 cursor-not-allowed">
-                <div className="flex flex-col">
-                  <span className="text-base font-semibold text-white uppercase tracking-wider">No recent sessions</span>
-                  <span className="text-xs text-slate-500">Transient data purged</span>
-                </div>
-              </div>
-            </div>
-          </section>
         </div>
       </main>
       

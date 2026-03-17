@@ -53,6 +53,7 @@ interface ChatContextProps {
   createRoom: (roomCode: string) => Promise<void>;
   joinRoom: (roomCode: string, userName?: string) => Promise<boolean>; // Returns true if successful, false otherwise
   leaveRoom: (roomCode: string) => Promise<void>;
+  killRoom: (roomCode: string) => Promise<void>;
   sendMessage: (roomCode: string, text: string) => Promise<void>;
   checkRoomExists: (roomCode: string) => Promise<boolean>; // Added explicit check function
 }
@@ -67,6 +68,7 @@ const ChatContext = React.createContext<ChatContextProps>({
   createRoom: async () => {},
   joinRoom: async () => false,
   leaveRoom: async () => {},
+  killRoom: async () => {},
   sendMessage: async () => {},
   checkRoomExists: async () => false, // Added default
 });
@@ -318,7 +320,38 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
        setLoading(false);
        console.log(`Finished leaveRoom process for ${userId} in room ${roomCode}.`);
     }
-  }, [db, cleanupListeners, getUserRef, setError]); // Removed currentUser
+  }, [db, cleanupListeners, getUserRef]); // Removed currentUser and setError
+
+  const killRoom = React.useCallback(async (roomCode: string): Promise<void> => {
+    roomCode = roomCode.toUpperCase();
+    if (!db || currentRoomCode.current !== roomCode) {
+        console.warn(`Kill room (${roomCode}) called without context.`);
+        return;
+    }
+
+    console.log(`!!! KILL SWITCH TRIGGERED for room ${roomCode} !!!`);
+    setLoading(true);
+    const roomRef = getRoomRef(roomCode);
+
+    try {
+        // 1. Log the destruction
+        await logInteraction('room_killed', { roomCode });
+        
+        // 2. Perform local cleanup first so UI doesn't hang
+        cleanupListeners();
+        setCurrentUser(null);
+        currentRoomCode.current = null;
+
+        // 3. Nuking the room from existence
+        await remove(roomRef);
+        console.log(`Room ${roomCode} successfully purged from database.`);
+    } catch (err: any) {
+        console.error("Error during killRoom operation:", err);
+        setError(`Failed to terminate session: ${err.message}`);
+    } finally {
+        setLoading(false);
+    }
+  }, [db, getRoomRef, cleanupListeners, logInteraction, setError]);
 
 
    const joinRoom = React.useCallback(async (roomCode: string, userName?: string): Promise<boolean> => {
@@ -695,9 +728,10 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
     createRoom,
     joinRoom,
     leaveRoom,
+    killRoom,
     sendMessage,
     checkRoomExists,
-  }), [messages, members, currentUser, loading, error, roomExists, createRoom, joinRoom, leaveRoom, sendMessage, checkRoomExists]);
+  }), [messages, members, currentUser, loading, error, roomExists, createRoom, joinRoom, leaveRoom, killRoom, sendMessage, checkRoomExists]);
 
   return <ChatContext.Provider value={value}>{children}</ChatContext.Provider>;
 };

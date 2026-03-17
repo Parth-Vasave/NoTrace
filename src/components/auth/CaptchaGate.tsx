@@ -56,7 +56,7 @@ export function CaptchaGate({ onVerify, className, timeoutMs }: CaptchaGateProps
     widgetIdRef.current = (window as any).turnstile.render(containerRef.current, {
       sitekey: process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY || '',
       theme: 'dark',
-      size: 'compact',
+      size: 'flexible',
       callback: (token: string) => {
         clearTimer();
         onVerify(token);
@@ -92,7 +92,7 @@ export function CaptchaGate({ onVerify, className, timeoutMs }: CaptchaGateProps
       <div className="space-y-3">
         <div
           ref={containerRef}
-          className="min-h-[65px] flex items-center justify-center border border-white/5 bg-white/[0.02] rounded-lg overflow-hidden backdrop-blur-sm"
+          className="min-h-[65px] border border-white/5 bg-white/[0.02] rounded-lg overflow-hidden backdrop-blur-sm"
         />
         {(status === 'timed_out' || status === 'error') && (
           <div className="text-xs text-white/50 flex items-center justify-between gap-4">
