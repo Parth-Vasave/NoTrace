@@ -8,6 +8,7 @@ import { useToast } from '@/hooks/use-toast';
 import { NewButton } from '@/components/ui/new-button';
 import { NewInput } from '@/components/ui/new-input';
 import { format } from 'date-fns';
+import { CaptchaGate } from '@/components/auth/CaptchaGate';
 
 interface ChatInterfaceProps {
   roomCode: string;
@@ -29,6 +30,7 @@ export default function ChatInterface({ roomCode }: ChatInterfaceProps) {
   const [isLeaving, setIsLeaving] = useState(false);
   const [isJoining, setIsJoining] = useState(true);
   const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const [isVerified, setIsVerified] = useState(false);
   const captchaContainerRef = useRef<HTMLDivElement>(null);
   const turnstileWidgetId = useRef<string | null>(null);
   
@@ -46,6 +48,8 @@ export default function ChatInterface({ roomCode }: ChatInterfaceProps) {
   useEffect(() => {
     let isMounted = true;
     const attemptJoin = async () => {
+      if (!isVerified) return; // Don't join until verified
+      
       try {
         const userName = searchParams.get('name') || undefined;
         const joinedSuccessfully = await joinRoom(roomCode, userName);
@@ -63,11 +67,11 @@ export default function ChatInterface({ roomCode }: ChatInterfaceProps) {
     };
     attemptJoin();
     return () => { isMounted = false; };
-  }, [roomCode, joinRoom, router, toast, searchParams]);
+  }, [roomCode, joinRoom, router, toast, searchParams, isVerified]);
 
   const handleSend = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (!inputValue.trim() || !currentUser || !captchaToken) return;
+    if (!inputValue.trim() || !currentUser) return;
     
     const text = inputValue.trim();
     setInputValue('');
@@ -78,31 +82,7 @@ export default function ChatInterface({ roomCode }: ChatInterfaceProps) {
     }
   };
 
-  // Manual Turnstile Render
-  const renderTurnstile = () => {
-    if ((window as any).turnstile && captchaContainerRef.current && !turnstileWidgetId.current) {
-      turnstileWidgetId.current = (window as any).turnstile.render(captchaContainerRef.current, {
-        sitekey: process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY || '', // Use environment variable
-        theme: 'dark',
-        size: 'compact',
-        callback: (token: string) => {
-          setCaptchaToken(token);
-        },
-      });
-    }
-  };
-
-  useEffect(() => {
-    if ((window as any).turnstile) {
-      renderTurnstile();
-    }
-    return () => {
-      if (turnstileWidgetId.current && (window as any).turnstile) {
-        (window as any).turnstile.remove(turnstileWidgetId.current);
-        turnstileWidgetId.current = null;
-      }
-    };
-  }, []);
+  // No longer needed: Manual Turnstile controls removed from footer
 
   const handleExit = async () => {
     setIsLeaving(true);
@@ -114,12 +94,48 @@ export default function ChatInterface({ roomCode }: ChatInterfaceProps) {
     }
   };
 
+  if (!isVerified) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-black text-white px-6">
+        <div className="max-w-md w-full text-center space-y-12">
+          <div className="space-y-4">
+            <h1 className="text-4xl md:text-5xl font-black tracking-tighter uppercase italic">Identity Verify</h1>
+            <p className="text-white/40 font-bold tracking-[0.2em] text-[10px] uppercase">
+              Secure Channel: {roomCode}
+            </p>
+          </div>
+          
+          <div className="bg-white/[0.02] border border-white/5 p-8 rounded-3xl backdrop-blur-md">
+            <p className="text-sm text-white/50 mb-8 font-light leading-relaxed">
+              To prevent automated interception and maintain transient session integrity, please solve the challenge below.
+            </p>
+            <CaptchaGate 
+              onVerify={(token) => {
+                setCaptchaToken(token);
+                if (token) {
+                  setTimeout(() => setIsVerified(true), 800); // Smooth transition
+                }
+              }} 
+            />
+          </div>
+
+          <button 
+            onClick={() => router.push('/')}
+            className="text-white/20 hover:text-white/60 transition-colors text-[10px] font-bold tracking-[0.3em] uppercase"
+          >
+            ← Abort Session
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   if (isJoining || (!currentUser && chatLoading)) {
     return (
       <div className="flex h-screen items-center justify-center bg-black text-white">
         <div className="text-center">
-          <span className="material-symbols-outlined text-6xl animate-pulse mb-4">security</span>
-          <p className="text-sm font-bold uppercase tracking-[0.3em]">Establishing secure link...</p>
+          <span className="material-symbols-outlined text-6xl animate-pulse mb-4 text-emerald-500">security</span>
+          <p className="text-sm font-bold uppercase tracking-[0.3em] text-emerald-500/80">Link Verified. Connecting...</p>
         </div>
       </div>
     );
@@ -193,22 +209,12 @@ export default function ChatInterface({ roomCode }: ChatInterfaceProps) {
               />
               <button 
                 type="submit"
-                disabled={isLeaving || !inputValue.trim() || !captchaToken}
+                disabled={isLeaving || !inputValue.trim()}
                 className="text-white/40 hover:text-white disabled:opacity-20 transition-colors py-3 md:py-4"
               >
                 <span className="material-symbols-outlined">send</span>
               </button>
             </div>
-            
-            {/* CAPTCHA Widget Container */}
-            <div className="mt-4 opacity-50 hover:opacity-100 transition-opacity">
-              <div ref={captchaContainerRef} />
-            </div>
-            
-            <Script 
-              src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" 
-              onLoad={renderTurnstile}
-            />
           </form>
           
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 md:gap-8">

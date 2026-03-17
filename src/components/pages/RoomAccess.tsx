@@ -9,12 +9,14 @@ import { useRouter } from 'next/navigation';
 import { useChat } from '@/context/chat-context';
 import { useToast } from '@/hooks/use-toast';
 import { generateRoomCode } from '@/lib/utils';
+import { CaptchaGate } from '@/components/auth/CaptchaGate';
 
 export default function RoomAccess() {
   const [roomCode, setRoomCode] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [isCreating, setIsCreating] = useState(false);
   const [isJoining, setIsJoining] = useState(false);
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
   const router = useRouter();
   const { checkRoomExists, createRoom } = useChat();
   const { toast } = useToast();
@@ -102,6 +104,24 @@ export default function RoomAccess() {
             </div>
           </section>
 
+          {/* Verification Section */}
+          <section className="bg-white/[0.02] border border-white/5 p-6 md:p-8 rounded-2xl md:rounded-3xl backdrop-blur-sm">
+            <h3 className="text-white/40 font-bold tracking-[0.3em] text-[10px] uppercase mb-6">Security Verification</h3>
+            <div className="flex flex-col md:flex-row items-center gap-6">
+              <CaptchaGate onVerify={setCaptchaToken} className="w-full md:w-auto" />
+              <div className="flex-1">
+                <p className="text-sm text-white/50 font-light leading-relaxed">
+                  Verification is required to prevent automated access and maintain session integrity.
+                </p>
+                {captchaToken && (
+                  <div className="mt-2 flex items-center gap-2 text-emerald-500/80 text-[10px] uppercase tracking-widest font-bold">
+                    <span className="material-symbols-outlined text-sm">verified</span> Verified Access Granted
+                  </div>
+                )}
+              </div>
+            </div>
+          </section>
+
           <div className="grid grid-cols-1 gap-12 md:gap-16">
             {/* Join Room Section */}
             <section className="flex flex-col gap-6 md:gap-8">
@@ -120,14 +140,14 @@ export default function RoomAccess() {
                     className="text-2xl md:text-3xl tracking-[0.3em] md:tracking-[0.5em] font-mono"
                   />
                 </div>
-                <NewButton 
-                  variant="primary" 
-                  onClick={handleJoinRoom}
-                  disabled={isJoining || isCreating || !roomCode.trim()}
-                  className="w-full md:w-auto"
-                >
-                  {isJoining ? 'Connecting...' : 'Connect to Room'}
-                </NewButton>
+                  <NewButton 
+                    variant="primary" 
+                    onClick={handleJoinRoom}
+                    disabled={isJoining || isCreating || !roomCode.trim() || !captchaToken}
+                    className="w-full md:w-auto"
+                  >
+                    {isJoining ? 'Connecting...' : 'Connect to Room'}
+                  </NewButton>
               </div>
             </section>
 
@@ -142,7 +162,7 @@ export default function RoomAccess() {
                   variant="outline" 
                   className="w-full md:w-fit"
                   onClick={handleCreateRoom}
-                  disabled={isCreating || isJoining}
+                  disabled={isCreating || isJoining || !captchaToken}
                 >
                   {isCreating ? 'Generating...' : 'Generate Room'}
                 </NewButton>
