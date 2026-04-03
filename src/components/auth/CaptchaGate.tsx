@@ -7,14 +7,15 @@ interface CaptchaGateProps {
   onVerify: (token: string | null) => void;
   className?: string;
   timeoutMs?: number;
+  serverValidate?: boolean;
 }
 
-export function CaptchaGate({ onVerify, className, timeoutMs }: CaptchaGateProps) {
+export function CaptchaGate({ onVerify, className, timeoutMs, serverValidate = true }: CaptchaGateProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const widgetIdRef = useRef<string | null>(null);
   const timeoutRef = useRef<number | null>(null);
 
-  const [status, setStatus] = useState<'loading' | 'ready' | 'timed_out' | 'error'>('loading');
+  const [status, setStatus] = useState<'loading' | 'ready' | 'verifying' | 'timed_out' | 'error'>('loading');
   const envTimeout = Number.parseInt(process.env.NEXT_PUBLIC_TURNSTILE_TIMEOUT_MS || '', 10);
   const timeoutValue = timeoutMs ?? (Number.isFinite(envTimeout) ? envTimeout : 8000);
 
@@ -57,9 +58,30 @@ export function CaptchaGate({ onVerify, className, timeoutMs }: CaptchaGateProps
       sitekey: process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY || '',
       theme: 'dark',
       size: 'flexible',
-      callback: (token: string) => {
+      callback: async (token: string) => {
         clearTimer();
-        onVerify(token);
+        if (serverValidate) {
+          setStatus('verifying');
+          try {
+            const res = await fetch('/api/verify-turnstile', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ token }),
+            });
+            const data = await res.json();
+            if (data.success) {
+              onVerify(token);
+            } else {
+              setStatus('error');
+              onVerify(null);
+            }
+          } catch {
+            setStatus('error');
+            onVerify(null);
+          }
+        } else {
+          onVerify(token);
+        }
       },
       'expired-callback': () => {
         clearTimer();
@@ -94,6 +116,11 @@ export function CaptchaGate({ onVerify, className, timeoutMs }: CaptchaGateProps
           ref={containerRef}
           className="min-h-[65px] border border-white/5 bg-white/[0.02] rounded-lg overflow-hidden backdrop-blur-sm"
         />
+        {status === 'verifying' && (
+          <div className="text-xs text-white/50 flex items-center gap-2">
+            <span className="animate-pulse">Verifying...</span>
+          </div>
+        )}
         {(status === 'timed_out' || status === 'error') && (
           <div className="text-xs text-white/50 flex items-center justify-between gap-4">
             <span>

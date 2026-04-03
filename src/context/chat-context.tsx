@@ -17,17 +17,12 @@ import {
   DatabaseReference,
 } from 'firebase/database';
 import { useFirebase } from './firebase-context';
-import { generateRandomName } from '@/lib/utils';
+import { generateRandomName, sanitizeRoomCode, sanitizeUsername, sanitizeText } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
 import { encryptMessage, decryptMessage } from '@/lib/crypto';
+import { logger } from '@/lib/logger';
 
-const MAX_MEMBERS = 8; // Define maximum members for a room
-const MEMBER_INACTIVITY_TIMEOUT = 5 * 60 * 1000; // 5 minutes in milliseconds
-const MAX_MESSAGE_LENGTH = 1000;
-const MAX_ROOM_MESSAGES = 100;
-const MESSAGE_COOLDOWN = 1000; // 1 second
-const ROOM_CODE_REGEX = /^[A-Z0-9]{4,12}$/;
-const USER_NAME_REGEX = /^[a-zA-Z0-9\s\-_.]{2,32}$/;
+import { ROOM_CONFIG, MESSAGE_CONFIG, MEMBER_CONFIG } from '@/lib/config';
 
 export interface Message {
   id?: string;
@@ -56,6 +51,9 @@ interface ChatContextProps {
   killRoom: (roomCode: string) => Promise<void>;
   sendMessage: (roomCode: string, text: string) => Promise<void>;
   checkRoomExists: (roomCode: string) => Promise<boolean>; // Added explicit check function
+  isVerified: boolean;
+  setIsVerified: (verified: boolean) => void;
+  isCreator: boolean;
 }
 
 const ChatContext = React.createContext<ChatContextProps>({
@@ -70,7 +68,10 @@ const ChatContext = React.createContext<ChatContextProps>({
   leaveRoom: async () => {},
   killRoom: async () => {},
   sendMessage: async () => {},
-  checkRoomExists: async () => false, // Added default
+  checkRoomExists: async () => false,
+  isVerified: false,
+  setIsVerified: () => {},
+  isCreator: false,
 });
 
 export const useChat = () => React.useContext(ChatContext);
@@ -90,6 +91,10 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
   const listenersRef = React.useRef<{ messages?: DatabaseReference; members?: DatabaseReference }>({});
   const joinAttemptRef = React.useRef<number>(0); 
   const lastMessageTimeRef = React.useRef<number>(0);
+  const [isVerified, setIsVerified] = React.useState<boolean>(false);
+  const [isCreator, setIsCreator] = React.useState<boolean>(false);
+  const lastRoomCreationRef = React.useRef<number>(0);
+  const roomsCreatedRef = React.useRef<number>(0);
 
   // Sync refs with state for stable callback access
   React.useEffect(() => {
@@ -133,19 +138,19 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
     if (listenersRef.current.messages) {
       off(listenersRef.current.messages);
       listenersRef.current.messages = undefined;
-      console.log("Messages listener detached.");
+      logger.debug("Messages listener detached.");
     }
     if (listenersRef.current.members) {
       off(listenersRef.current.members);
       listenersRef.current.members = undefined;
-       console.log("Members listener detached.");
+       logger.debug("Members listener detached.");
     }
      // Reset local state associated with listeners
     setMessages([]);
     setMembers([]);
     setError(null); // Clear errors related to the old room
     // Don't reset currentUser or currentRoomCode here, leaveRoom/joinRoom manage those
-    console.log("Listeners cleaned up and related state reset.");
+    logger.debug("Listeners cleaned up and related state reset.");
   }, []);
 
   const logInteraction = React.useCallback(async (type: string, metadata: any = {}) => {
@@ -162,7 +167,7 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
         ...metadata
       });
     } catch (err) {
-      console.warn("Logging failed (likely due to security rules):", err);
+      logger.warn("Logging failed:", err);
     }
   }, [db]);
 
@@ -174,21 +179,21 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
        if (snapshot.exists()) {
          const messagesData = snapshot.val();
          const messageIds = Object.keys(messagesData);
-         if (messageIds.length > MAX_ROOM_MESSAGES) {
+         if (messageIds.length > MESSAGE_CONFIG.MAX_PER_ROOM) {
            // Sort by timestamp (approximate by ID if needed, but here we have the data)
            const sortedMessages = Object.entries(messagesData)
              .map(([id, data]: [string, any]) => ({ id, timestamp: data.timestamp }))
              .sort((a, b) => (a.timestamp as number) - (b.timestamp as number));
            
-           const toDelete = sortedMessages.slice(0, sortedMessages.length - MAX_ROOM_MESSAGES);
+           const toDelete = sortedMessages.slice(0, sortedMessages.length - MESSAGE_CONFIG.MAX_PER_ROOM);
            const updates: any = {};
            toDelete.forEach(msg => { updates[msg.id] = null; });
            await update(messagesRef, updates);
-           console.log(`Trimmed ${toDelete.length} messages from room ${roomCode}`);
+           logger.debug(`Trimmed ${toDelete.length} messages from room ${roomCode}`);
          }
        }
      } catch (err) {
-       console.error("Error trimming messages:", err);
+       logger.error("Error trimming messages:", err);
      }
   }, [db, getMessagesRef]);
 
@@ -197,21 +202,21 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
 
    const checkRoomExists = React.useCallback(async (roomCode: string): Promise<boolean> => {
     if (!db) {
-      console.error("checkRoomExists: Database not initialized!");
+      logger.error("checkRoomExists: Database not initialized!");
       return false;
     }
     try {
-        console.log(`Checking if room ${roomCode} exists...`);
+        logger.debug(`Checking if room ${roomCode} exists...`);
         const roomRef = getRoomRef(roomCode.toUpperCase());
         
         // Add a small race for timeout diagnostics if needed, 
         // but Firebase should eventually timeout or error.
         const snapshot = await get(roomRef);
         const exists = snapshot.exists();
-        console.log(`Room ${roomCode} exists: ${exists}`);
+        logger.debug(`Room ${roomCode} exists: ${exists}`);
         return exists;
     } catch (err: any) {
-        console.error("Error checking room existence:", err);
+        logger.error("Error checking room existence:", err);
         setError(`Connection Error: ${err.message}`);
         return false;
     }
@@ -232,32 +237,43 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
     setLoading(true);
     setError(null);
     try {
+      const now = Date.now();
+      if (now - lastRoomCreationRef.current < ROOM_CONFIG.CREATION_COOLDOWN_MS) {
+        throw new Error("Please wait before creating another room.");
+      }
+      if (roomsCreatedRef.current >= ROOM_CONFIG.MAX_CREATIONS_PER_SESSION) {
+        throw new Error("Room creation limit reached for this session.");
+      }
+
       const upperCaseRoomCode = roomCode.toUpperCase();
-      
-      if (!ROOM_CODE_REGEX.test(upperCaseRoomCode)) {
+
+      if (!ROOM_CONFIG.CODE_REGEX.test(upperCaseRoomCode)) {
         throw new Error("Invalid room code. Use 4-12 alphanumeric characters.");
       }
 
-      console.log(`[ChatContext] Creating room: ${upperCaseRoomCode}...`);
+      logger.debug(`[ChatContext] Creating room: ${upperCaseRoomCode}...`);
       
       const roomRef = getRoomRef(upperCaseRoomCode);
       
-      console.log("[ChatContext] Checking for existing room...");
+      logger.debug("[ChatContext] Checking for existing room...");
       const roomSnapshot = await get(roomRef);
        if (roomSnapshot.exists()) {
-         console.warn(`[ChatContext] Room ${upperCaseRoomCode} already exists.`);
+         logger.warn(`[ChatContext] Room ${upperCaseRoomCode} already exists.`);
          throw new Error(`Room ${upperCaseRoomCode} already exists.`);
        }
 
-      console.log("[ChatContext] Setting room data...");
+      const creatorId = `user_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
       await set(roomRef, {
         createdAt: serverTimestamp(),
+        createdBy: creatorId,
         messages: {},
         members: {},
       });
-      console.log(`[ChatContext] Room ${upperCaseRoomCode} created successfully.`);
+      setIsCreator(true);
+      lastRoomCreationRef.current = Date.now();
+      roomsCreatedRef.current++;
     } catch (err: any) {
-      console.error("[ChatContext] Error creating room:", err);
+      logger.error("[ChatContext] Error creating room:", err);
       setError(`Failed to create room ${roomCode}: ${err.message}`);
       throw err;
     } finally {
@@ -273,7 +289,7 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
 
      // Prevent leaving if not in the specified room or no user/db
     if (!db || !localCurrentUser || currentRoomCode.current !== roomCode) {
-      console.warn(`Leave room (${roomCode}) called unnecessarily or without context. Current room: ${currentRoomCode.current}, User: ${localCurrentUser?.id}`);
+      logger.warn(`Leave room (${roomCode}) called unnecessarily or without context. Current room: ${currentRoomCode.current}, User: ${localCurrentUser?.id}`);
       // Ensure state is clean if called in an inconsistent state
       if (currentRoomCode.current === roomCode || listenersRef.current.messages || listenersRef.current.members) {
            cleanupListeners();
@@ -285,7 +301,7 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
       return;
     }
 
-    console.log(`Attempting to leave room ${roomCode} as user ${localCurrentUser.id}...`);
+    logger.debug(`Attempting to leave room ${roomCode} as user ${localCurrentUser.id}...`);
     const userId = localCurrentUser.id;
     const userRef = getUserRef(roomCode, userId);
 
@@ -299,37 +315,40 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
         // 1. Cancel onDisconnect (best effort)
         try {
             await onDisconnect(userRef).cancel();
-            console.log(`onDisconnect cancelled for ${userId}.`);
+            logger.debug(`onDisconnect cancelled for ${userId}.`);
         } catch (cancelError: any) {
-            console.warn(`Could not cancel onDisconnect (might already be disconnected): ${cancelError.message}`);
+            logger.warn(`Could not cancel onDisconnect (might already be disconnected): ${cancelError.message}`);
         }
 
         // 2. Mark user offline OR remove them
         try {
             // Using update ensures lastSeen is set even if user was already offline somehow
             await update(userRef, { online: false, lastSeen: serverTimestamp() });
-            console.log(`User ${userId} marked as offline in DB.`);
+            logger.debug(`User ${userId} marked as offline in DB.`);
         } catch (updateError: any) {
-             console.warn(`Could not mark user ${userId} offline in DB: ${updateError.message}`);
+             logger.warn(`Could not mark user ${userId} offline in DB: ${updateError.message}`);
         }
 
     } catch (err: any) {
-      console.error("Unexpected error during leaveRoom DB operations:", err);
+      logger.error("Unexpected error during leaveRoom DB operations:", err);
       // Local state is already cleared, just log the error
     } finally {
        setLoading(false);
-       console.log(`Finished leaveRoom process for ${userId} in room ${roomCode}.`);
+       logger.debug(`Finished leaveRoom process for ${userId} in room ${roomCode}.`);
     }
   }, [db, cleanupListeners, getUserRef]); // Removed currentUser and setError
 
   const killRoom = React.useCallback(async (roomCode: string): Promise<void> => {
     roomCode = roomCode.toUpperCase();
     if (!db || currentRoomCode.current !== roomCode) {
-        console.warn(`Kill room (${roomCode}) called without context.`);
         return;
     }
 
-    console.log(`!!! KILL SWITCH TRIGGERED for room ${roomCode} !!!`);
+    if (!isCreator) {
+      setError("Only the room creator can destroy the room.");
+      return;
+    }
+
     setLoading(true);
     const roomRef = getRoomRef(roomCode);
 
@@ -344,14 +363,14 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
 
         // 3. Nuking the room from existence
         await remove(roomRef);
-        console.log(`Room ${roomCode} successfully purged from database.`);
+        logger.debug(`Room ${roomCode} successfully purged from database.`);
     } catch (err: any) {
-        console.error("Error during killRoom operation:", err);
+        logger.error("Error during killRoom operation:", err);
         setError(`Failed to terminate session: ${err.message}`);
     } finally {
         setLoading(false);
     }
-  }, [db, getRoomRef, cleanupListeners, logInteraction, setError]);
+  }, [db, getRoomRef, cleanupListeners, logInteraction, setError, isCreator]);
 
 
    const joinRoom = React.useCallback(async (roomCode: string, userName?: string): Promise<boolean> => {
@@ -359,25 +378,28 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
        setError("Database not initialized");
        return false;
      }
-     roomCode = roomCode.toUpperCase(); // Ensure consistency
+     roomCode = sanitizeRoomCode(roomCode);
 
-     if (!ROOM_CODE_REGEX.test(roomCode)) {
+     if (!ROOM_CONFIG.CODE_REGEX.test(roomCode)) {
        setError("Invalid room code format.");
        return false;
      }
 
-     if (userName && !USER_NAME_REGEX.test(userName)) {
-       setError("Invalid username. Use 2-32 alphanumeric characters, spaces, or dots/underscores.");
-       return false;
+     if (userName) {
+       userName = sanitizeUsername(userName);
+       if (!MEMBER_CONFIG.USERNAME_REGEX.test(userName)) {
+         setError("Invalid username. Use 2-32 alphanumeric characters, spaces, or dots/underscores.");
+         return false;
+       }
      }
 
       if (loadingRef.current && currentRoomCode.current === roomCode) {
-          console.log("Join attempt ignored: Already joining room", roomCode);
+          logger.debug("Join attempt ignored: Already joining room", roomCode);
           return false;
       }
 
      if (currentUserRef.current && currentRoomCode.current === roomCode) {
-       console.log("Already in room:", roomCode);
+       logger.debug("Already in room:", roomCode);
        setLoading(false);
        setError(null);
        return true;
@@ -386,10 +408,10 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
      setLoading(true);
      setError(null);
      const attemptId = ++joinAttemptRef.current;
-     console.log(`[Join Attempt ${attemptId}] Starting for room: ${roomCode}`);
+     logger.debug(`[Join Attempt ${attemptId}] Starting for room: ${roomCode}`);
 
      if (currentRoomCode.current && currentRoomCode.current !== roomCode) {
-       console.log(`[Join Attempt ${attemptId}] Cleaning up listeners & state from previous room: ${currentRoomCode.current}`);
+       logger.debug(`[Join Attempt ${attemptId}] Cleaning up listeners & state from previous room: ${currentRoomCode.current}`);
        await leaveRoom(currentRoomCode.current); // Await cleanup of the old room
      } else if (!currentRoomCode.current) {
         cleanupListeners();
@@ -405,19 +427,24 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
 
         const roomSnapshot = await get(roomRef);
         if (!roomSnapshot.exists()) {
-            if (joinAttemptRef.current !== attemptId) { console.log(`[Join Attempt ${attemptId}] Aborted: Newer attempt started.`); return false; }
+            if (joinAttemptRef.current !== attemptId) return false;
             setError(`Room ${roomCode} does not exist.`);
-            console.warn(`[Join Attempt ${attemptId}] Failed: Room ${roomCode} does not exist.`);
             currentRoomCode.current = null;
             setLoading(false);
             return false;
         }
 
+        // Check if this session created the room (creator ID stored in room data)
+        const roomData = roomSnapshot.val();
+        if (roomData?.createdBy) {
+          setIsCreator(false); // Will be set true only if matching
+        }
+
        let transactionError: string | null = null;
-       console.log(`[Join Attempt ${attemptId}] Starting transaction for new user ${memberId} (${finalUserName})...`);
+       logger.debug(`[Join Attempt ${attemptId}] Starting transaction for new user ${memberId} (${finalUserName})...`);
        const transactionResult = await runTransaction(membersRef, (currentMembers) => {
           if (joinAttemptRef.current !== attemptId) {
-              console.log(`[Join Attempt ${attemptId} - TXN] Aborting: Newer attempt running.`);
+              logger.debug(`[Join Attempt ${attemptId} - TXN] Aborting: Newer attempt running.`);
               transactionError = "Aborted due to newer join attempt.";
               return undefined;
           }
@@ -426,26 +453,26 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
          const onlineMembers = Object.values(currentMembers).filter((m: any) => m?.online === true);
          const onlineMemberCount = onlineMembers.length;
 
-         console.log(`[Join Attempt ${attemptId} - TXN] Current online members: ${onlineMemberCount}, Max allowed: ${MAX_MEMBERS}`);
+         logger.debug(`[Join Attempt ${attemptId} - TXN] Current online members: ${onlineMemberCount}, Max allowed: ${ROOM_CONFIG.MAX_MEMBERS}`);
 
-         if (onlineMemberCount >= MAX_MEMBERS) {
-           console.warn(`[Join Attempt ${attemptId} - TXN] Aborting: Room full (${onlineMemberCount}/${MAX_MEMBERS}).`);
-           transactionError = `Room ${roomCode} is full. Max ${MAX_MEMBERS} members allowed.`; // More specific error
+         if (onlineMemberCount >= ROOM_CONFIG.MAX_MEMBERS) {
+           logger.warn(`[Join Attempt ${attemptId} - TXN] Aborting: Room full (${onlineMemberCount}/${ROOM_CONFIG.MAX_MEMBERS}).`);
+           transactionError = `Room ${roomCode} is full. Max ${ROOM_CONFIG.MAX_MEMBERS} members allowed.`; // More specific error
            return undefined;
          }
 
          const newUser: Member = { id: memberId, name: finalUserName, online: true, lastSeen: serverTimestamp() };
          currentMembers[memberId] = newUser; // Directly modify draft state
-         console.log(`[Join Attempt ${attemptId} - TXN] Proceeding to add new user ${memberId}.`);
+         logger.debug(`[Join Attempt ${attemptId} - TXN] Proceeding to add new user ${memberId}.`);
          return currentMembers;
        }, { applyLocally: false });
 
 
         if (joinAttemptRef.current !== attemptId) {
-            console.log(`[Join Attempt ${attemptId}] Aborted after transaction: Newer attempt started.`);
+            logger.debug(`[Join Attempt ${attemptId}] Aborted after transaction: Newer attempt started.`);
             if (transactionResult.committed) {
-                console.warn(`[Join Attempt ${attemptId}] Transaction committed but attempt is outdated. Attempting cleanup.`);
-                try { await remove(userRef); } catch (cleanupError) { console.error("Error cleaning up outdated user entry:", cleanupError); }
+                logger.warn(`[Join Attempt ${attemptId}] Transaction committed but attempt is outdated. Attempting cleanup.`);
+                try { await remove(userRef); } catch (cleanupError) { logger.error("Error cleaning up outdated user entry:", cleanupError); }
             }
             return false;
         }
@@ -453,19 +480,19 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
 
        if (!transactionResult.committed) {
          const reason = transactionError || `Failed to add user due to high contention (maxretry).`;
-         console.error(`[Join Attempt ${attemptId}] Transaction failed to commit for room ${roomCode}. Reason: ${reason}`);
+         logger.error(`[Join Attempt ${attemptId}] Transaction failed to commit for room ${roomCode}. Reason: ${reason}`);
          setError(reason); // Use the specific error message
          currentRoomCode.current = null;
          setLoading(false);
          return false;
        }
 
-        console.log(`[Join Attempt ${attemptId}] Transaction committed successfully. User ${memberId} added.`);
+        logger.debug(`[Join Attempt ${attemptId}] Transaction committed successfully. User ${memberId} added.`);
 
        if (!transactionResult.snapshot.child(memberId).exists()) {
-          console.error(`[Join Attempt ${attemptId}] CRITICAL: Transaction committed, but user ${memberId} missing in final snapshot.`);
+          logger.error(`[Join Attempt ${attemptId}] CRITICAL: Transaction committed, but user ${memberId} missing in final snapshot.`);
           setError(`An inconsistency occurred while joining room ${roomCode}. Please try again.`);
-          try { await remove(userRef); } catch (cleanupError) { console.error("Error cleaning up user entry after inconsistent transaction:", cleanupError); }
+          try { await remove(userRef); } catch (cleanupError) { logger.error("Error cleaning up user entry after inconsistent transaction:", cleanupError); }
           currentRoomCode.current = null;
           setLoading(false);
           return false;
@@ -475,11 +502,11 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
         setCurrentUser(finalUser);
 
 
-        console.log(`[Join Attempt ${attemptId}] Setting up onDisconnect for ${memberId}...`);
+        logger.debug(`[Join Attempt ${attemptId}] Setting up onDisconnect for ${memberId}...`);
         await onDisconnect(userRef).update({ online: false, lastSeen: serverTimestamp() });
 
 
-        console.log(`[Join Attempt ${attemptId}] Attaching listeners...`);
+        logger.debug(`[Join Attempt ${attemptId}] Attaching listeners...`);
         const messagesListenerRef = getMessagesRef(roomCode);
         listenersRef.current.messages = messagesListenerRef;
         onValue(messagesListenerRef, async (snapshot) => {
@@ -493,7 +520,7 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
             setMessages(loadedMessages);
         }, (err) => {
             if (currentRoomCode.current !== roomCode || joinAttemptRef.current !== attemptId) return;
-            console.error(`Messages listener error for room ${roomCode}:`, err);
+            logger.error(`Messages listener error for room ${roomCode}:`, err);
             setError(`Failed to load messages: ${err.message}`);
             cleanupListeners();
             setCurrentUser(null);
@@ -513,7 +540,7 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
              if (currentLocalUser && currentRoomCode.current === roomCode) { // Check if we still think we're in this room
                 const stillExists = loadedMembers.some(m => m.id === currentLocalUser.id);
                 if (!stillExists) {
-                    console.warn(`Current user ${currentLocalUser.id} no longer found in members list for room ${roomCode}. Forcing local leave.`);
+                    logger.warn(`Current user ${currentLocalUser.id} no longer found in members list for room ${roomCode}. Forcing local leave.`);
                     setError("You seem to have been disconnected from the room.");
                     // Re-trigger leaveRoom which handles cleanup and state reset
                     leaveRoom(roomCode);
@@ -522,7 +549,7 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
 
         }, (err) => {
             if (currentRoomCode.current !== roomCode || joinAttemptRef.current !== attemptId) return;
-            console.error(`Members listener error for room ${roomCode}:`, err);
+            logger.error(`Members listener error for room ${roomCode}:`, err);
             setError(`Failed to load members: ${err.message}`);
             cleanupListeners();
             setCurrentUser(null);
@@ -531,17 +558,17 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
         });
 
 
-       console.log(`[Join Attempt ${attemptId}] Successfully joined room ${roomCode} as ${finalUser.name} (${memberId})`);
+       logger.debug(`[Join Attempt ${attemptId}] Successfully joined room ${roomCode} as ${finalUser.name} (${memberId})`);
        setLoading(false);
        return true;
 
      } catch (err: any) {
         if (joinAttemptRef.current !== attemptId) {
-             console.log(`[Join Attempt ${attemptId}] Aborted due to error, but newer attempt started:`, err.message);
+             logger.debug(`[Join Attempt ${attemptId}] Aborted due to error, but newer attempt started:`, err.message);
              return false;
         }
 
-       console.error(`[Join Attempt ${attemptId}] General error during joinRoom process:`, err);
+       logger.error(`[Join Attempt ${attemptId}] General error during joinRoom process:`, err);
        const specificError = `Failed to join room ${roomCode}: ${err.message || 'Unknown error'}`;
        setError(specificError);
        cleanupListeners();
@@ -569,23 +596,23 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
      const localCurrentUser = currentUserRef.current; // Use ref for stability
 
     if (!db || !localCurrentUser || currentRoomCode.current !== roomCode) {
-        console.error("Cannot send message: Conditions not met.", { db: !!db, user: !!localCurrentUser, currentRoom: currentRoomCode.current, targetRoom: roomCode });
+        logger.error("Cannot send message: Conditions not met.", { db: !!db, user: !!localCurrentUser, currentRoom: currentRoomCode.current, targetRoom: roomCode });
         throw new Error("Cannot send message: Not connected to the room or database.");
     }
 
-    const trimmedText = text.trim();
+    const trimmedText = sanitizeText(text);
     if (!trimmedText) {
-       console.log("Attempted to send an empty message.");
+       logger.debug("Attempted to send an empty message.");
        return;
     }
 
-    if (trimmedText.length > MAX_MESSAGE_LENGTH) {
-      setError(`Message too long (max ${MAX_MESSAGE_LENGTH} characters)`);
+    if (trimmedText.length > MESSAGE_CONFIG.MAX_LENGTH) {
+      setError(`Message too long (max ${MESSAGE_CONFIG.MAX_LENGTH} characters)`);
       throw new Error("Message exceeds length limit");
     }
 
     const now = Date.now();
-    if (now - lastMessageTimeRef.current < MESSAGE_COOLDOWN) {
+    if (now - lastMessageTimeRef.current < MESSAGE_CONFIG.COOLDOWN_MS) {
       toast({ variant: "destructive", title: "Rate Limited", description: "Please wait a moment before sending another message." });
       throw new Error("Rate limit exceeded");
     }
@@ -608,17 +635,17 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
       
       // Post-send security & maintenance
       await logInteraction('message_sent', { length: trimmedText.length });
-      if (messages.length >= MAX_ROOM_MESSAGES) {
+      if (messages.length >= MESSAGE_CONFIG.MAX_PER_ROOM) {
         await trimMessages(roomCode);
       }
 
        try {
            await update(userRef, { lastSeen: serverTimestamp() });
        } catch (updateError) {
-           console.warn(`Failed to update lastSeen for ${localCurrentUser.id} after sending message:`, updateError);
+           logger.warn(`Failed to update lastSeen for ${localCurrentUser.id} after sending message:`, updateError);
        }
     } catch (err: any) {
-      console.error("Error sending message:", err);
+      logger.error("Error sending message:", err);
       setError(`Failed to send message: ${err.message}`);
       throw err;
     }
@@ -632,12 +659,12 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
     return () => {
        const roomToLeave = currentRoomCode.current;
        const userToLeave = currentUserRef.current;
-       console.log("ChatProvider unmounting...");
+       logger.debug("ChatProvider unmounting...");
        if (userToLeave && roomToLeave) {
-         console.log(`Initiating leaveRoom cleanup for user ${userToLeave.id} in room ${roomToLeave}`);
+         logger.debug(`Initiating leaveRoom cleanup for user ${userToLeave.id} in room ${roomToLeave}`);
          leaveRoom(roomToLeave);
        } else {
-          console.log("No active user/room, running listener cleanup only.");
+          logger.debug("No active user/room, running listener cleanup only.");
           cleanupListeners();
        }
     };
@@ -660,7 +687,7 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
 
         if (!snapshot.exists()) {
            if (currentLocalUser && currentRoomCode.current === currentCheckedRoom) {
-              console.warn(`Inactivity check found current room ${currentCheckedRoom} deleted. Forcing local leave.`);
+              logger.warn(`Inactivity check found current room ${currentCheckedRoom} deleted. Forcing local leave.`);
               setError("The room seems to have been deleted.");
               leaveRoom(currentCheckedRoom); // Trigger full leave process
            }
@@ -674,21 +701,21 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
         for (const memberId in membersData) {
           const member = membersData[memberId] as Member;
           if (!member || !member.lastSeen) {
-            console.warn(`Skipping member ${memberId} in inactivity check due to missing data.`);
+            logger.warn(`Skipping member ${memberId} in inactivity check due to missing data.`);
             continue;
           }
           if (typeof member.lastSeen === 'number') {
             const timeSinceSeen = now - member.lastSeen;
-             const isStaleOffline = !member.online && timeSinceSeen > MEMBER_INACTIVITY_TIMEOUT;
-             const isStaleOnline = member.online && timeSinceSeen > MEMBER_INACTIVITY_TIMEOUT * 1.5;
+             const isStaleOffline = !member.online && timeSinceSeen > MEMBER_CONFIG.INACTIVITY_TIMEOUT_MS;
+             const isStaleOnline = member.online && timeSinceSeen > MEMBER_CONFIG.INACTIVITY_TIMEOUT_MS * 1.5;
 
             if (isStaleOffline || isStaleOnline) {
                 const reason = isStaleOffline ? "inactive (offline)" : "inactive (stuck online)";
-                console.log(`Scheduling removal of ${reason} member ${member.name} (${memberId}). Last seen: ${new Date(member.lastSeen).toISOString()}`);
+                logger.debug(`Scheduling removal of ${reason} member ${member.name} (${memberId}). Last seen: ${new Date(member.lastSeen).toISOString()}`);
                 membersToRemove.push(memberId);
             }
           } else if (typeof member.lastSeen !== 'object') { // Ignore server timestamps (objects)
-             console.warn(`Member ${member.name} (${memberId}) has invalid 'lastSeen' format:`, member.lastSeen);
+             logger.warn(`Member ${member.name} (${memberId}) has invalid 'lastSeen' format:`, member.lastSeen);
           }
         }
 
@@ -696,11 +723,11 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
             const updates: { [key: string]: null } = {};
              membersToRemove.forEach(id => { updates[id] = null; });
             await update(membersRef, updates);
-            console.log(`Removed ${membersToRemove.length} inactive members from room ${currentCheckedRoom}.`);
+            logger.debug(`Removed ${membersToRemove.length} inactive members from room ${currentCheckedRoom}.`);
 
             // Optional: Check if local user was removed during this cleanup
              if (currentLocalUser && membersToRemove.includes(currentLocalUser.id) && currentRoomCode.current === currentCheckedRoom) {
-                 console.warn(`Local user ${currentLocalUser.id} removed due to inactivity in room ${currentCheckedRoom}. Forcing local leave.`);
+                 logger.warn(`Local user ${currentLocalUser.id} removed due to inactivity in room ${currentCheckedRoom}. Forcing local leave.`);
                  setError("You were removed from the room due to inactivity.");
                  // LeaveRoom might have already been called implicitly, but calling again ensures state consistency
                  leaveRoom(currentCheckedRoom);
@@ -708,9 +735,9 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
          }
 
       } catch (err: any) {
-        console.error(`Error during inactivity check for room ${currentCheckedRoom}:`, err.message || err);
+        logger.error(`Error during inactivity check for room ${currentCheckedRoom}:`, err.message || err);
       }
-    }, MEMBER_INACTIVITY_TIMEOUT / 2);
+    }, MEMBER_CONFIG.INACTIVITY_TIMEOUT_MS / 2);
 
     return () => clearInterval(interval);
    }, [db, currentUser, getMembersRef, leaveRoom, setError]); // Added leaveRoom and setError
@@ -731,7 +758,10 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
     killRoom,
     sendMessage,
     checkRoomExists,
-  }), [messages, members, currentUser, loading, error, roomExists, createRoom, joinRoom, leaveRoom, killRoom, sendMessage, checkRoomExists]);
+    isVerified,
+    setIsVerified,
+    isCreator,
+  }), [messages, members, currentUser, loading, error, roomExists, createRoom, joinRoom, leaveRoom, killRoom, sendMessage, checkRoomExists, isVerified, setIsVerified, isCreator]);
 
   return <ChatContext.Provider value={value}>{children}</ChatContext.Provider>;
 };

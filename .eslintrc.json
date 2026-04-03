@@ -1,3 +1,14 @@
 {
-  "extends": "next/core-web-vitals"
+  "extends": [
+    "next/core-web-vitals",
+    "plugin:security/recommended-legacy"
+  ],
+  "plugins": ["security"],
+  "rules": {
+    "no-eval": "error",
+    "no-implied-eval": "error",
+    "no-new-func": "error",
+    "security/detect-object-injection": "off",
+    "security/detect-non-literal-fs-filename": "off"
+  }
 }

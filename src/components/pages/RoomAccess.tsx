@@ -21,7 +21,7 @@ export default function RoomAccess() {
   const [pendingAction, setPendingAction] = useState<'create' | 'join' | null>(null);
 
   const router = useRouter();
-  const { checkRoomExists, createRoom } = useChat();
+  const { checkRoomExists, createRoom, setIsVerified } = useChat();
   const { toast } = useToast();
 
   // Effect to handle pending action after CAPTCHA verification
@@ -130,7 +130,10 @@ export default function RoomAccess() {
                 <p className="text-sm text-white/50 font-light leading-relaxed">
                   Solve the challenge below to prove your identity and proceed with the secure session.
                 </p>
-                <CaptchaGate onVerify={setCaptchaToken} className="w-full" />
+                <CaptchaGate onVerify={(token) => {
+                  setCaptchaToken(token);
+                  if (token) setIsVerified(true);
+                }} className="w-full" />
               </div>
 
               <button 

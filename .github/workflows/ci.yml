@@ -8,7 +8,7 @@ on:
 
 jobs:
   validate:
-    name: Validate and Build
+    name: Lint, Type Check, Test & Build
     runs-on: ubuntu-latest
 
     steps:
@@ -30,13 +30,12 @@ jobs:
       - name: Lint Check
         run: npm run lint
 
-      - name: Run Automated Tests
+      - name: Run Tests
         run: npm test
 
       - name: Build Verification
         run: npm run build
         env:
-          # Placeholders for environment variables if needed at build time
           NEXT_PUBLIC_FIREBASE_API_KEY: ${{ secrets.FIREBASE_API_KEY }}
           NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: ${{ secrets.FIREBASE_AUTH_DOMAIN }}
           NEXT_PUBLIC_FIREBASE_DATABASE_URL: ${{ secrets.FIREBASE_DATABASE_URL }}
@@ -45,3 +44,23 @@ jobs:
           NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.FIREBASE_MESSAGING_SENDER_ID }}
           NEXT_PUBLIC_FIREBASE_APP_ID: ${{ secrets.FIREBASE_APP_ID }}
           NEXT_PUBLIC_TURNSTILE_SITE_KEY: "0x4AAAAAAATest"
+
+  security:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Audit Dependencies
+        run: npm audit --audit-level=high
+        continue-on-error: true

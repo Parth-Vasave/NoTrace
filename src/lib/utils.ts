@@ -5,6 +5,30 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
 
+/**
+ * Sanitizes user-provided text by stripping control characters and trimming.
+ * Does not strip HTML since messages are rendered as text (not innerHTML).
+ */
+export function sanitizeText(input: string): string {
+  // Remove zero-width chars and control characters (except newline/tab)
+  // eslint-disable-next-line no-control-regex
+  return input.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F\u200B-\u200F\u2028-\u202F\uFEFF]/g, '').trim();
+}
+
+/**
+ * Sanitizes a room code — uppercase, strip anything non-alphanumeric.
+ */
+export function sanitizeRoomCode(code: string): string {
+  return code.toUpperCase().replace(/[^A-Z0-9]/g, '');
+}
+
+/**
+ * Sanitizes a username — strip control chars.
+ */
+export function sanitizeUsername(name: string): string {
+  return sanitizeText(name).slice(0, 32);
+}
+
 // Function to generate a random 6-character alphanumeric room code
 export function generateRoomCode(length: number = 6): string {
   const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';

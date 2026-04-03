@@ -3,25 +3,34 @@
     "rooms": {
       "$room_id": {
         ".read": "true",
-        ".write": "!data.exists() || data.child('members/' + auth.token.user_id).exists()",
+        ".write": "true",
         "messages": {
           "$msg_id": {
-            ".validate": "newData.hasChildren(['senderId', 'text', 'timestamp']) && newData.child('text').val().length <= 1000",
-            ".write": "!data.exists() || data.child('senderId').val() == auth.token.user_id"
+            ".validate": "newData.hasChildren(['senderId', 'text', 'timestamp']) && newData.child('text').isString() && newData.child('text').val().length <= 1000 && newData.child('senderId').isString() && newData.child('senderId').val().length <= 100"
           }
         },
         "members": {
           "$user_id": {
-            ".write": "!data.exists() || $user_id == auth.token.user_id",
-            "online": { ".validate": "newData.isBoolean()" },
-            "lastSeen": { ".validate": "newData.val() <= now" }
+            ".validate": "newData.hasChildren(['id', 'name', 'online']) && newData.child('name').isString() && newData.child('name').val().length <= 32 && newData.child('online').isBoolean()",
+            "lastSeen": {
+              ".validate": "newData.val() <= now"
+            }
           }
+        },
+        "createdBy": {
+          ".validate": "newData.isString() && newData.val().length <= 100"
+        },
+        "createdAt": {
+          ".validate": "newData.val() <= now"
         }
       }
     },
     "abuse_logs": {
       ".read": "false",
-      ".write": "true"
+      ".write": "true",
+      "$log_id": {
+        ".validate": "newData.hasChildren(['type', 'timestamp']) && newData.child('type').isString() && newData.child('type').val().length <= 50"
+      }
     }
   }
 }

@@ -9,6 +9,7 @@ import { NewButton } from '@/components/ui/new-button';
 import { NewInput } from '@/components/ui/new-input';
 import { format } from 'date-fns';
 import { CaptchaGate } from '@/components/auth/CaptchaGate';
+import { useVirtualScroll } from '@/hooks/use-virtual-scroll';
 
 interface ChatInterfaceProps {
   roomCode: string;
@@ -25,6 +26,9 @@ export default function ChatInterface({ roomCode }: ChatInterfaceProps) {
     currentUser,
     loading: chatLoading,
     error: chatError,
+    isVerified,
+    setIsVerified,
+    isCreator,
   } = useChat();
 
   const [inputValue, setInputValue] = useState('');
@@ -32,12 +36,19 @@ export default function ChatInterface({ roomCode }: ChatInterfaceProps) {
   const [isKilling, setIsKilling] = useState(false);
   const [isJoining, setIsJoining] = useState(true);
   const [captchaToken, setCaptchaToken] = useState<string | null>(null);
-  const [isVerified, setIsVerified] = useState(false);
-  
+  const [disconnected, setDisconnected] = useState(false);
+  const [reconnecting, setReconnecting] = useState(false);
+  const reconnectAttemptsRef = useRef(0);
+  const MAX_RECONNECT_ATTEMPTS = 3;
+
   const router = useRouter();
   const searchParams = useSearchParams();
   const { toast } = useToast();
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const { containerRef: scrollRef, visibleRange, topPadding, bottomPadding } = useVirtualScroll({
+    itemCount: messages.length,
+    estimatedItemHeight: 80,
+    overscan: 5,
+  });
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -68,6 +79,30 @@ export default function ChatInterface({ roomCode }: ChatInterfaceProps) {
     attemptJoin();
     return () => { isMounted = false; };
   }, [roomCode, joinRoom, router, toast, searchParams, isVerified]);
+
+  // Detect disconnection (user removed from room while still on the page)
+  useEffect(() => {
+    if (isVerified && !isJoining && !currentUser && !chatLoading && !isLeaving && !isKilling) {
+      setDisconnected(true);
+      // Auto-reconnect
+      if (reconnectAttemptsRef.current < MAX_RECONNECT_ATTEMPTS) {
+        setReconnecting(true);
+        reconnectAttemptsRef.current++;
+        const timer = setTimeout(async () => {
+          try {
+            const userName = searchParams.get('name') || undefined;
+            const success = await joinRoom(roomCode, userName);
+            if (success) {
+              setDisconnected(false);
+              reconnectAttemptsRef.current = 0;
+            }
+          } catch {}
+          setReconnecting(false);
+        }, 2000);
+        return () => clearTimeout(timer);
+      }
+    }
+  }, [currentUser, chatLoading, isVerified, isJoining, isLeaving, isKilling, joinRoom, roomCode, searchParams]);
 
   const handleSend = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -163,6 +198,55 @@ export default function ChatInterface({ roomCode }: ChatInterfaceProps) {
     );
   }
 
+  if (disconnected && !reconnecting) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-black text-white px-6">
+        <div className="max-w-md w-full text-center space-y-8">
+          <h1 className="text-3xl font-black tracking-tighter uppercase">Disconnected</h1>
+          <p className="text-white/50 text-sm">
+            {chatError || "You were removed from the room, possibly due to inactivity."}
+          </p>
+          <div className="flex gap-4 justify-center">
+            <button
+              onClick={async () => {
+                setReconnecting(true);
+                try {
+                  const userName = searchParams.get('name') || undefined;
+                  const success = await joinRoom(roomCode, userName);
+                  if (success) {
+                    setDisconnected(false);
+                    reconnectAttemptsRef.current = 0;
+                  }
+                } catch {}
+                setReconnecting(false);
+              }}
+              className="px-8 py-2 border border-emerald-500/30 text-emerald-500 text-xs font-mono uppercase tracking-widest hover:bg-emerald-500/10 transition-colors"
+            >
+              Reconnect
+            </button>
+            <button
+              onClick={() => router.push('/')}
+              className="px-8 py-2 border border-white/20 text-white/60 text-xs font-mono uppercase tracking-widest hover:bg-white/5 transition-colors"
+            >
+              Exit
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (reconnecting) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-black text-white">
+        <div className="text-center">
+          <span className="material-symbols-outlined text-6xl animate-pulse mb-4 text-amber-500">sync</span>
+          <p className="text-sm font-bold uppercase tracking-[0.3em] text-amber-500/80">Reconnecting...</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="relative flex h-screen w-full flex-col overflow-hidden bg-black text-white font-sans antialiased">
       {/* Header Section */}
@@ -198,12 +282,13 @@ export default function ChatInterface({ roomCode }: ChatInterfaceProps) {
 
         {/* Chat Messages */}
         <section ref={scrollRef} className="flex-grow flex flex-col gap-8 mb-8 overflow-y-auto pr-4 no-scrollbar">
-          {messages.map((msg, idx) => {
+          {topPadding > 0 && <div style={{ minHeight: topPadding }} />}
+          {messages.slice(visibleRange.start, visibleRange.end).map((msg, idx) => {
             const isSelf = msg.senderId === currentUser?.id;
             const senderName = members.find(m => m.id === msg.senderId)?.name || 'Unknown';
-            
+
             return (
-              <div key={msg.id || idx} className="flex flex-col gap-2">
+              <div key={msg.id || (visibleRange.start + idx)} className="flex flex-col gap-2">
                 <div className="flex items-center gap-3 font-mono text-[10px] tracking-widest uppercase text-white/40">
                   <span>IDENTITY: {senderName}</span>
                   <span>
@@ -217,6 +302,7 @@ export default function ChatInterface({ roomCode }: ChatInterfaceProps) {
               </div>
             );
           })}
+          {bottomPadding > 0 && <div style={{ minHeight: bottomPadding }} />}
           <div className="mt-auto"></div>
         </section>
 
@@ -258,13 +344,15 @@ export default function ChatInterface({ roomCode }: ChatInterfaceProps) {
             {/* Footer Actions */}
             <div className="flex flex-col md:flex-row items-center justify-between gap-6 pt-4">
               <div className="flex gap-4 w-full md:w-auto">
-                <button 
-                  onClick={() => handleKill()}
-                  disabled={isKilling || isLeaving}
-                  className="px-10 py-2 border border-red-500/30 text-red-500 text-xs font-mono uppercase tracking-widest hover:bg-red-500/10 transition-colors disabled:opacity-20"
-                >
-                  {isKilling ? 'KILLING...' : 'KILL'}
-                </button>
+                {isCreator && (
+                  <button
+                    onClick={() => handleKill()}
+                    disabled={isKilling || isLeaving}
+                    className="px-10 py-2 border border-red-500/30 text-red-500 text-xs font-mono uppercase tracking-widest hover:bg-red-500/10 transition-colors disabled:opacity-20"
+                  >
+                    {isKilling ? 'KILLING...' : 'KILL'}
+                  </button>
+                )}
                 <button 
                   onClick={() => handleExit()}
                   disabled={isKilling || isLeaving}
